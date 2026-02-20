@@ -40,24 +40,28 @@ graph TB
     style DB fill:#4053D6
     style SNS fill:#DD344C
 ```
-
 ## 📸 Screenshots
 
-### Lambda Functions Deployed
+### Lambda Functions
 ![Lambda Functions](docs/screenshots/lambda-functions.png)
+![Lambda Details](docs/screenshots/Lambda2.png)
 
-### Cost Anomaly Email Alert
-![Email Alert](docs/screenshots/email-alert.png)
+### DynamoDB Data
+![DynamoDB](docs/screenshots/dynamodb-data.png)
 
-### DynamoDB Historical Data
-![DynamoDB Data](docs/screenshots/dynamodb-data.png)
-
-### CloudWatch Logs with Emojis
+### CloudWatch Logs
 ![CloudWatch Logs](docs/screenshots/cloudwatch-logs.png)
+![CloudWatch Details](docs/screenshots/Cloudwatch2.png)
 
-### EventBridge Scheduled Rules
-![EventBridge Rules](docs/screenshots/eventbridge-rules.png)
+### EventBridge Rules
+![EventBridge](docs/screenshots/eventbridge-rules.png)
+![EventBridge Details](docs/screenshots/EventBridge2.png)
 
+### SNS Configuration
+![SNS Topic](docs/screenshots/sns-topic.png)
+
+### Terraform Output
+![Terraform Output](docs/screenshots/terraform-output.png)
 ## 🔧 Componentes
 
 ### Infrastructure
