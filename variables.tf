@@ -19,7 +19,7 @@ variable "project_name" {
 variable "alert_email" {
   description = "Email for cost anomaly alerts (leave empty to configure later)"
   type        = string
-  default     = "santi.albisetti@gmail.com"
+  default     = "example@mail.com"
 }
 
 variable "cost_anomaly_threshold" {
