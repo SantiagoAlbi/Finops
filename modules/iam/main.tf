@@ -255,6 +255,8 @@ resource "aws_iam_policy" "github_actions_policy" {
           "s3:DeleteObject",
           "s3:ListBucket",
           "s3:GetBucketVersioning",
+          "iam:ListOpenIDConnectProviders",
+          "iam:GetOpenIDConnectProvider",
           "s3:PutBucketVersioning"
         ]
         Resource = "*"
