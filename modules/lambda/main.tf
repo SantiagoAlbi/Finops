@@ -25,10 +25,10 @@ resource "aws_lambda_function" "cost_anomaly_detector" {
 
   environment {
     variables = {
-      SNS_TOPIC_ARN      = var.sns_topic_arn
-      DYNAMODB_TABLE     = var.dynamodb_table_name
-      ANOMALY_THRESHOLD  = var.anomaly_threshold
-      HISTORICAL_DAYS    = var.historical_days
+      SNS_TOPIC_ARN     = var.sns_topic_arn
+      DYNAMODB_TABLE    = var.dynamodb_table_name
+      ANOMALY_THRESHOLD = var.anomaly_threshold
+      HISTORICAL_DAYS   = var.historical_days
     }
   }
 
