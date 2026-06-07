@@ -1,4 +1,3 @@
-# IAM Role base para las Lambda functions
 resource "aws_iam_role" "lambda_role" {
   name = "${var.project_name}-lambda-role"
 
@@ -16,17 +15,18 @@ resource "aws_iam_role" "lambda_role" {
   })
 
   tags = {
-    Name = "${var.project_name}-lambda-role"
+    Name        = "${var.project_name}-lambda-role"
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+    Environment = var.environment
   }
 }
 
-# Policy 1: CloudWatch Logs (todas las Lambdas escriben logs)
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Policy 2: Cost Explorer (para Lambda de anomalías)
 resource "aws_iam_policy" "cost_explorer_policy" {
   name        = "${var.project_name}-cost-explorer-policy"
   description = "Allow Lambda to query Cost Explorer API"
@@ -35,15 +35,18 @@ resource "aws_iam_policy" "cost_explorer_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = [
-          "ce:GetCostAndUsage",
-          "ce:GetCostForecast"
-        ]
+        Effect   = "Allow"
+        Action   = ["ce:GetCostAndUsage", "ce:GetCostForecast"]
         Resource = "*"
       }
     ]
   })
+
+  tags = {
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+    Environment = var.environment
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_cost_explorer" {
@@ -51,7 +54,6 @@ resource "aws_iam_role_policy_attachment" "lambda_cost_explorer" {
   policy_arn = aws_iam_policy.cost_explorer_policy.arn
 }
 
-# Policy 3: DynamoDB (escribir histórico)
 resource "aws_iam_policy" "dynamodb_policy" {
   name        = "${var.project_name}-dynamodb-policy"
   description = "Allow Lambda to write to DynamoDB cost history table"
@@ -67,10 +69,16 @@ resource "aws_iam_policy" "dynamodb_policy" {
           "dynamodb:Query",
           "dynamodb:Scan"
         ]
-        Resource = aws_dynamodb_table.cost_history.arn
+        Resource = var.dynamodb_table_arn
       }
     ]
   })
+
+  tags = {
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+    Environment = var.environment
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_dynamodb" {
@@ -78,7 +86,6 @@ resource "aws_iam_role_policy_attachment" "lambda_dynamodb" {
   policy_arn = aws_iam_policy.dynamodb_policy.arn
 }
 
-# Policy 4: SNS (publicar alertas)
 resource "aws_iam_policy" "sns_policy" {
   name        = "${var.project_name}-sns-policy"
   description = "Allow Lambda to publish to SNS topic"
@@ -87,14 +94,18 @@ resource "aws_iam_policy" "sns_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = [
-          "sns:Publish"
-        ]
-        Resource = aws_sns_topic.cost_alerts.arn
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = var.sns_topic_arn
       }
     ]
   })
+
+  tags = {
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+    Environment = var.environment
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_sns" {
@@ -102,7 +113,6 @@ resource "aws_iam_role_policy_attachment" "lambda_sns" {
   policy_arn = aws_iam_policy.sns_policy.arn
 }
 
-# Policy 5: EC2 Read (para Lambda de recursos sin usar)
 resource "aws_iam_policy" "ec2_read_policy" {
   name        = "${var.project_name}-ec2-read-policy"
   description = "Allow Lambda to describe EC2 resources"
@@ -126,6 +136,12 @@ resource "aws_iam_policy" "ec2_read_policy" {
       }
     ]
   })
+
+  tags = {
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+    Environment = var.environment
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_ec2_read" {
@@ -133,7 +149,6 @@ resource "aws_iam_role_policy_attachment" "lambda_ec2_read" {
   policy_arn = aws_iam_policy.ec2_read_policy.arn
 }
 
-# Policy 6: CloudWatch Metrics (publicar métricas custom)
 resource "aws_iam_policy" "cloudwatch_metrics_policy" {
   name        = "${var.project_name}-cloudwatch-metrics-policy"
   description = "Allow Lambda to publish custom metrics"
@@ -142,14 +157,18 @@ resource "aws_iam_policy" "cloudwatch_metrics_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = [
-          "cloudwatch:PutMetricData"
-        ]
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
         Resource = "*"
       }
     ]
   })
+
+  tags = {
+    Project     = var.project_name
+    ManagedBy   = "Terraform"
+    Environment = var.environment
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_cloudwatch_metrics" {

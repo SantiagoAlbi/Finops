@@ -1,30 +1,26 @@
 variable "project_name" {
   type        = string
   description = "Project name prefix for all resources"
-  default     = "finops-platform"
 }
 
 variable "environment" {
   type        = string
   description = "Deployment environment"
-  default     = "dev"
 }
 
-variable "aws_region" {
+variable "lambda_role_arn" {
   type        = string
-  description = "AWS region"
-  default     = "us-east-1"
+  description = "ARN of the Lambda execution IAM role"
 }
 
-variable "alert_email" {
+variable "sns_topic_arn" {
   type        = string
-  description = "Email address to receive cost alerts"
+  description = "ARN of the SNS cost alerts topic"
 }
 
-variable "retention_days" {
-  type        = number
-  description = "CloudWatch log retention in days"
-  default     = 7
+variable "dynamodb_table_name" {
+  type        = string
+  description = "Name of the DynamoDB cost history table"
 }
 
 variable "anomaly_threshold" {
@@ -43,4 +39,14 @@ variable "snapshot_age_days" {
   type        = string
   description = "Age in days to flag snapshots as unused"
   default     = "30"
+}
+
+variable "cost_anomaly_log_group" {
+  type        = string
+  description = "Name of the cost anomaly Lambda log group (ensures log group exists before Lambda)"
+}
+
+variable "unused_resources_log_group" {
+  type        = string
+  description = "Name of the unused resources Lambda log group (ensures log group exists before Lambda)"
 }
