@@ -1,6 +1,4 @@
 terraform {
-  required_version = ">= 1.7"
-
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -8,20 +6,15 @@ terraform {
     }
   }
 
-  # Backend local por ahora, luego puedes cambiar a S3
-  backend "local" {
-    path = "terraform.tfstate"
+  backend "s3" {
+    bucket         = "finops-platform-terraform-state-975049900198"
+    key            = "finops/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "finops-platform-terraform-locks"
+    encrypt        = true
   }
 }
 
 provider "aws" {
   region = var.aws_region
-
-  default_tags {
-    tags = {
-      Project     = "FinOps-Platform"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    }
-  }
 }
