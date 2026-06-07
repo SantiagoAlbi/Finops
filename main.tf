@@ -20,8 +20,8 @@ module "iam" {
   environment        = var.environment
   dynamodb_table_arn = module.storage.table_arn
   sns_topic_arn      = module.notifications.topic_arn
+  github_repo        = var.github_repo
 }
-
 module "monitoring" {
   source = "./modules/monitoring"
 

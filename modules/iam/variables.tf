@@ -17,3 +17,8 @@ variable "sns_topic_arn" {
   type        = string
   description = "ARN of the SNS cost alerts topic"
 }
+
+variable "github_repo" {
+  type        = string
+  description = "GitHub repository in format owner/repo"
+}

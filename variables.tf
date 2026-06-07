@@ -44,3 +44,9 @@ variable "snapshot_age_days" {
   description = "Age in days to flag snapshots as unused"
   default     = "30"
 }
+
+variable "github_repo" {
+  type        = string
+  description = "GitHub repository in format owner/repo"
+  default     = "SantiagoAlbi/Finops"
+}
