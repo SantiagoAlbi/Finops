@@ -29,11 +29,20 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Package Lambda functions
+        run: |
+          mkdir -p lambda_src/cost_anomaly
+          mkdir -p lambda_src/unused_resources
+          zip -j lambda_src/cost_anomaly/cost_anomaly_detector.zip lambda_src/cost_anomaly/lambda_cost_anomaly.py
+          zip -j lambda_src/unused_resources/unused_resources_scanner.zip lambda_src/unused_resources/lambda_unused_resources.py
+
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+          
 
       - name: Terraform Init
         run: terraform init
@@ -71,6 +80,14 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+        
+      - name: Package Lambda functions
+        run: |
+          mkdir -p lambda_src/cost_anomaly
+          mkdir -p lambda_src/unused_resources
+          zip -j lambda_src/cost_anomaly/cost_anomaly_detector.zip lambda_src/cost_anomaly/lambda_cost_anomaly.py
+          zip -j lambda_src/unused_resources/unused_resources_scanner.zip lambda_src/unused_resources/lambda_unused_resources.py
+
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
