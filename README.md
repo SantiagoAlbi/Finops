@@ -1,637 +1,689 @@
-[![Terraform](https://img.shields.io/badge/Terraform-1.0+-623CE4?logo=terraform&logoColor=white)](https://www.terraform.io/)
+[![Terraform](https://img.shields.io/badge/Terraform-1.10+-623CE4?logo=terraform&logoColor=white)](https://www.terraform.io/)
 [![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?logo=amazon-aws&logoColor=white)](https://aws.amazon.com/)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Lambda](https://img.shields.io/badge/AWS-Lambda-FF9900?logo=aws-lambda&logoColor=white)](https://aws.amazon.com/lambda/)
-[![DynamoDB](https://img.shields.io/badge/AWS-DynamoDB-4053D6?logo=amazon-dynamodb&logoColor=white)](https://aws.amazon.com/dynamodb/)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![FinOps](https://img.shields.io/badge/FinOps-Cost%20Optimization-00ADD8)](https://www.finops.org/)
 
-# FinOps Platform - AWS Cost Monitoring & Optimization
+---
 
-# FinOps Platform - AWS Cost Anomaly Detection
+# 🇬🇧 FinOps Platform — AWS Cost Monitoring & Optimization (V2)
 
-Sistema automatizado de detección de anomalías de costos en AWS usando Lambda, Cost Explorer, y SNS.
+Serverless platform that automatically detects AWS cost anomalies, scans for unused resources, and sends email alerts — fully automated with CI/CD via GitHub Actions OIDC.
 
-## 📋 Descripción
+> **V2 upgrade:** Modular Terraform structure + S3 remote state + CI/CD pipeline with OIDC authentication. No static AWS credentials anywhere.
 
-Plataforma que monitorea costos AWS cada 6 horas, detecta incrementos anormales (>30%) comparando con el promedio histórico de 7 días, y envía alertas por email.
+---
 
+## Architecture
 
-## 🏗️ Arquitectura
-```mermaid
-graph TB
-    EB1[EventBridge<br/>rate: 6h] --> L1[Lambda #1<br/>Cost Anomaly]
-    EB2[EventBridge<br/>cron: 9am] --> L2[Lambda #2<br/>Unused Resources]
-    
-    L1 --> CE[Cost Explorer API]
-    L2 --> AWS[EC2/ELB/RDS APIs]
-    
-    CE --> DB[(DynamoDB<br/>cost-history)]
-    AWS --> DB
-    
-    DB --> SNS[SNS Topic]
-    SNS --> EMAIL[📧 Email Alerts]
-    
-    L1 -.-> CW[CloudWatch<br/>Logs + Dashboard]
-    L2 -.-> CW
-    
-    style L1 fill:#FF9900
-    style L2 fill:#FF9900
-    style DB fill:#4053D6
-    style SNS fill:#DD344C
 ```
-## 📸 Screenshots
+┌─────────────────────────────────────────────────┐
+│                  EventBridge                     │
+│   rate(6h) ──────────┐   cron(9am) ─────────────┤
+└──────────────────────┼──────────────────────────┘
+                       │
+            ┌──────────┴──────────┐
+            ▼                     ▼
+   ┌─────────────────┐   ┌─────────────────┐
+   │   Lambda #1     │   │   Lambda #2     │
+   │ Cost Anomaly    │   │ Unused Resources│
+   │   Detector      │   │    Scanner      │
+   └────────┬────────┘   └────────┬────────┘
+            │                     │
+            ▼                     ▼
+   ┌─────────────┐       ┌─────────────────┐
+   │Cost Explorer│       │  EC2 / ELB /    │
+   │     API     │       │  RDS APIs       │
+   └──────┬──────┘       └────────┬────────┘
+          │                       │
+          └───────────┬───────────┘
+                      ▼
+             ┌─────────────────┐
+             │    DynamoDB     │
+             │  cost-history   │
+             └────────┬────────┘
+                      │
+                      ▼
+             ┌─────────────────┐
+             │   SNS Topic     │──► 📧 Email Alerts
+             └─────────────────┘
+
+             ┌─────────────────┐
+             │   CloudWatch    │
+             │ Logs + Dashboard│
+             │   + Alarms      │
+             └─────────────────┘
+
+CI/CD Pipeline:
+┌──────────────────────────────────────────────┐
+│  GitHub Actions (OIDC)                        │
+│  PR → terraform plan                          │
+│  push main → terraform plan + apply           │
+└──────────────────────────────────────────────┘
+```
+
+---
+
+## Infrastructure (Terraform Modules)
+
+| Module | Resources |
+|--------|-----------|
+| `modules/notifications` | SNS Topic + Email Subscription |
+| `modules/storage` | DynamoDB Table (TTL + PITR) |
+| `modules/iam` | Lambda Role + GitHub Actions OIDC Role + Policies |
+| `modules/monitoring` | CloudWatch Log Groups + Dashboard + Alarm |
+| `modules/lambda` | 2× Lambda Functions + 2× EventBridge Rules |
+
+**Remote state:** S3 bucket with file locking (`use_lockfile = true`)  
+**Bootstrap:** Separate Terraform config in `bootstrap/` — run once to provision the state bucket and lock table.
+
+---
+
+## Lambda Functions
+
+### Lambda #1 — Cost Anomaly Detector
+- **Trigger:** Every 6 hours (`rate(6 hours)`)
+- **Logic:** Queries Cost Explorer for today's costs vs. 7-day historical average per service. Fires alert if any service exceeds 30% above average.
+- **Output:** Saves data to DynamoDB + SNS alert if anomalies found.
+
+**Sample alert:**
+```
+🚨 COST ANOMALY ALERT
+
+2 services with abnormal costs detected:
+
+- Amazon ELB: $0.05 (↑150% vs avg $0.02)
+- Amazon RDS: $0.02 (↑100% vs avg $0.01)
+
+Threshold: 30% | Comparison period: last 7 days
+```
+
+### Lambda #2 — Unused Resources Scanner
+- **Trigger:** Daily at 9:00 AM UTC (`cron(0 9 * * ? *)`)
+- **Detects:** Unattached EBS volumes, unassigned Elastic IPs, idle Load Balancers, manual RDS snapshots older than 30 days.
+
+**Sample alert:**
+```
+🗑️ UNUSED RESOURCES DETECTED
+
+📦 Unattached EBS Volumes (2):
+  • vol-013f3c944b957b44e — 1 GB gp2 — $0.10/mo
+  • vol-0cdd0b0d59b205d9f — 1 GB gp2 — $0.10/mo
+
+💰 Potential savings: $0.20/mo
+```
+
+---
+
+## Project Structure
+
+```
+finops/
+├── provider.tf                        # S3 backend + AWS provider
+├── variables.tf                       # Root variables
+├── outputs.tf                         # Root outputs
+├── main.tf                            # Module calls
+│
+├── modules/
+│   ├── notifications/                 # SNS
+│   ├── storage/                       # DynamoDB
+│   ├── iam/                           # IAM roles + OIDC
+│   ├── monitoring/                    # CloudWatch
+│   └── lambda/                        # Lambda + EventBridge
+│
+├── lambda_src/
+│   ├── cost_anomaly/
+│   │   └── lambda_cost_anomaly.py
+│   └── unused_resources/
+│       └── lambda_unused_resources.py
+│
+├── bootstrap/                         # One-time state backend setup
+│   └── main.tf
+│
+├── docs/
+│   └── screenshots/
+│
+└── .github/
+    └── workflows/
+        ├── terraform-validate.yml     # fmt + validate on PRs
+        └── deploy.yml                 # plan + apply with OIDC
+```
+
+---
+
+## CI/CD Pipeline
+
+```
+Pull Request
+    │
+    └── terraform-validate.yml
+            ├── fmt check
+            ├── validate
+            └── plan (read-only)
+
+Push to main
+    │
+    └── deploy.yml
+            ├── Job 1: terraform-plan
+            │       ├── OIDC → assume IAM role (no static credentials)
+            │       ├── Package Lambda ZIPs
+            │       ├── terraform init (S3 backend)
+            │       ├── terraform fmt -check
+            │       ├── terraform validate
+            │       └── terraform plan → upload artifact
+            │
+            └── Job 2: terraform-apply (needs: plan)
+                    ├── OIDC → assume IAM role
+                    ├── Package Lambda ZIPs
+                    ├── terraform init (S3 backend)
+                    ├── Download plan artifact
+                    └── terraform apply
+```
+
+**Authentication:** GitHub Actions assumes an IAM role via OIDC — no AWS access keys stored as secrets.
+
+---
+
+## Screenshots
+
+### CI/CD Pipeline
+![GitHub Actions](docs/screenshots/github-actions.png)
 
 ### Lambda Functions
 ![Lambda Functions](docs/screenshots/lambda-functions.png)
-![Lambda Details](docs/screenshots/Lambda2.png)
 
-### DynamoDB Data
-![DynamoDB](docs/screenshots/dynamodb-data.png)
-
-### CloudWatch Logs
-![CloudWatch Logs](docs/screenshots/cloudwatch-logs.png)
-![CloudWatch Details](docs/screenshots/Cloudwatch2.png)
+### CloudWatch Dashboard
+![Dashboard](docs/screenshots/cloudwatch-dashboard.png)
 
 ### EventBridge Rules
 ![EventBridge](docs/screenshots/eventbridge-rules.png)
-![EventBridge Details](docs/screenshots/EventBridge2.png)
 
-### SNS Configuration
-![SNS Topic](docs/screenshots/sns-topic.png)
+### S3 Remote State
+![S3 State](docs/screenshots/s3-remote-state.png)
 
-### Terraform Output
-![Terraform Output](docs/screenshots/terraform-output.png)
-## 🔧 Componentes
+### IAM OIDC Role
+![IAM Role](docs/screenshots/iam-oidc-role.png)
 
-### Infrastructure
-- **SNS Topic**: canal de notificaciones encriptado
-- **DynamoDB**: histórico de costos (pay-per-request)
-- **IAM Role**: permisos least-privilege para Lambda
-- **CloudWatch Logs**: retención 7 días
-- **EventBridge**: trigger cada 6 horas
-- **Lambda**: Python 3.11, 256MB, timeout 60s
+---
 
-### Lambda Function
-- **Runtime**: Python 3.11
-- **Trigger**: EventBridge (rate: 6 hours)
-- **Permisos**: Cost Explorer, DynamoDB, SNS, CloudWatch Logs
-- **Variables de entorno**:
-  - `DYNAMODB_TABLE`: tabla de histórico
-  - `SNS_TOPIC_ARN`: topic para alertas
-  - `ANOMALY_THRESHOLD`: 30%
-  - `HISTORICAL_DAYS`: 7 días
+## Deployment
 
-## 🚀 Deployment
-
-### Prerrequisitos
-- Terraform >= 1.0
-- AWS CLI configurado
-- Python 3.11+
-
-### Pasos
-
-1. **Clonar y configurar:**
+### Prerequisites
 ```bash
-cd finops
-# Editar variables.tf - agregar tu email en alert_email
+terraform version   # >= 1.10
+aws sts get-caller-identity
+python3 --version   # >= 3.11
 ```
 
-2. **Empaquetar Lambda:**
+### 1. Bootstrap (one time only)
 ```bash
-./package_lambda.sh
-```
-
-3. **Deployar infraestructura:**
-```bash
+cd bootstrap/
 terraform init
-terraform plan
 terraform apply
 ```
 
-4. **Confirmar email:**
-- Revisar inbox/spam
-- Click en "Confirm subscription" del email de AWS SNS
+### 2. Configure secrets
+In GitHub → Settings → Secrets → Actions:
+- `AWS_ROLE_ARN` — ARN of the GitHub Actions OIDC role (output from step 3)
+- `ALERT_EMAIL` — email address for SNS alerts
 
-5. **Probar:**
+### 3. Deploy
 ```bash
+cd ..
+terraform init
+terraform apply
+```
+
+Confirm the SNS subscription email in your inbox.
+
+### 4. Test manually
+```bash
+# Test Lambda #1
 aws lambda invoke \
   --function-name finops-platform-cost-anomaly-detector \
   --region us-east-1 \
-  response.json
+  response1.json && cat response1.json
 
-cat response.json
-```
-
-## 📊 Cómo funciona
-
-1. **EventBridge** ejecuta Lambda cada 6 horas
-2. **Lambda consulta Cost Explorer:**
-   - Costos de HOY por servicio
-   - Costos de últimos 7 días por servicio
-3. **Calcula promedio** histórico por servicio
-4. **Detecta anomalías:** si hoy > promedio × 1.30 (30%)
-5. **Guarda en DynamoDB** para histórico
-6. **Envía alerta SNS** si hay anomalías
-
-### Ejemplo de Alerta
-```
-🚨 ALERTA DE ANOMALÍA DE COSTOS 🚨
-
-Se detectaron 2 servicios con costos anormales:
-
-- Amazon Elastic Load Balancing: $0.05 (↑150% vs promedio $0.02)
-- Amazon Relational Database Service: $0.02 (↑100% vs promedio $0.01)
-
-Umbral de alerta: 30%
-Período de comparación: últimos 7 días
-```
-
-## 📈 Verificar datos
-
-**Ver logs de Lambda:**
-```bash
-aws logs tail /aws/lambda/finops-platform-cost-anomaly-detector \
-  --follow --region us-east-1
-```
-
-**Ver datos en DynamoDB:**
-```bash
-aws dynamodb scan \
-  --table-name finops-platform-cost-history \
+# Test Lambda #2
+aws lambda invoke \
+  --function-name finops-platform-unused-resources-scanner \
   --region us-east-1 \
-  --output table
+  response2.json && cat response2.json
 ```
 
-**Estructura de datos guardados:**
-```json
-{
-  "date_service": "2026-02-13#EC2",
-  "timestamp": 1771014880,
-  "service": "EC2",
-  "cost": 45.67,
-  "currency": "USD",
-  "ttl": 1776198880
-}
-```
-
-## 💰 Costos Estimados
-
-| Servicio | Costo/mes |
-|----------|-----------|
-| Lambda (120 ejecuciones/mes × 1s) | $0.00 (free tier) |
-| SNS (50 emails/mes) | $0.00 (free tier) |
-| DynamoDB (on-demand, bajo volumen) | $1-2 |
-| CloudWatch Logs (retención 7 días) | $0.50 |
-| Cost Explorer API (120 requests) | $1.20 |
-| **TOTAL** | **~$3/mes** |
-
-## 🔒 Seguridad
-
-- IAM roles con least privilege
-- SNS encriptado con AWS managed key
-- CloudWatch logs para auditoría
-- DynamoDB con point-in-time recovery
-- TTL en DynamoDB (datos se borran a 60 días)
-
-## 🎯 Skills Demostrados
-
-- ✅ Terraform (IaC)
-- ✅ AWS Lambda (serverless)
-- ✅ Python (boto3)
-- ✅ Cost Explorer API
-- ✅ DynamoDB (NoSQL)
-- ✅ SNS (notificaciones)
-- ✅ EventBridge (scheduling)
-- ✅ IAM (permisos)
-- ✅ CloudWatch (logs)
-- ✅ FinOps (cost management)
-
-## 🧹 Cleanup
+### 5. Cleanup
 ```bash
 terraform destroy
 ```
 
-Confirmar con `yes`.
+---
 
-## 📝 Variables Configurables
+## Estimated Cost
 
-| Variable | Default | Descripción |
-|----------|---------|-------------|
-| `aws_region` | us-east-1 | Región AWS |
-| `environment` | dev | Ambiente |
-| `project_name` | finops-platform | Nombre del proyecto |
-| `alert_email` | "" | Email para alertas |
-| `cost_anomaly_threshold` | 30 | % de incremento para alertar |
-| `historical_days` | 7 | Días para comparación |
-| `retention_days` | 7 | Retención CloudWatch logs |
+| Service | Monthly Usage | Cost |
+|---------|--------------|------|
+| Lambda #1 | 120 invocations × 1s | $0.00 (free tier) |
+| Lambda #2 | 30 invocations × 2s | $0.00 (free tier) |
+| SNS | ~50 emails | $0.00 (free tier) |
+| DynamoDB | on-demand, low volume | ~$1.00 |
+| CloudWatch Logs | 7-day retention | ~$0.50 |
+| CloudWatch Dashboard | 1 dashboard | ~$3.00 |
+| Cost Explorer API | ~150 requests | ~$1.50 |
+| **TOTAL** | | **~$6/mo** |
 
-## 🔄 Próximas Fases
+---
 
-- **Fase 2**: Lambda para detectar recursos sin usar (EBS, EIP, etc.)
-- **Fase 3**: CloudWatch Dashboard con métricas visuales
-- **Fase 4**: Integración con Slack
+## Security
 
-## 📚 Referencias
+- IAM least-privilege (separate roles for Lambda and GitHub Actions)
+- No static AWS credentials — OIDC only
+- S3 state bucket: versioning + encryption + public access blocked
+- DynamoDB: point-in-time recovery enabled
+- CloudWatch logs for full audit trail
+- DynamoDB TTL: auto-delete records after 60 days
 
-- [AWS Cost Explorer API](https://docs.aws.amazon.com/cost-management/latest/APIReference/API_Operations.html)
-- [Lambda Best Practices](https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html)
-- [DynamoDB TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html)
+---
 
-## Fase 2: Unused Resources Scanner
+## V1 → V2: What Changed and Why
 
-### Lambda #2 - Detector de Recursos Sin Usar
+| | V1 | V2 |
+|---|---|---|
+| Terraform structure | Flat (all `.tf` in root) | 5 modules with clear ownership |
+| State management | Local `terraform.tfstate` | S3 remote state + file locking |
+| Lambda packaging | Manual `package_lambda.sh` | `archive_file` data source — automatic |
+| CI/CD | `validate` only (fmt + validate) | Full `plan` + `apply` pipeline |
+| AWS authentication | Static credentials in `.env` | OIDC — zero stored credentials |
+| IAM | Single shared role | Separate role per workload |
+| Outputs | Scattered or missing | Centralized in root `outputs.tf` |
 
-**Detecta:**
-- EBS volumes sin attachar
-- Elastic IPs sin asignar
-- Load Balancers sin targets
-- RDS snapshots manuales >30 días
+---
 
-**Trigger:** Diario a las 9am UTC
+## Challenges Solved
 
-**Ejemplo de alerta recibida:**
+| Problem | Root Cause | Solution |
+|---------|-----------|----------|
+| `use_lockfile` unsupported | Workflow used Terraform 1.7.0 | Upgraded to 1.10.0 |
+| "No changes" with empty state | S3 backend was empty, no prior apply | Ran full `terraform apply` |
+| `AccessDenied: ListOpenIDConnectProviders` | GitHub Actions role missing IAM OIDC read permissions | Added `iam:ListOpenIDConnectProviders` + `iam:GetOpenIDConnectProvider` to role policy |
+| Lambda ZIPs missing in CI | `*.zip` in `.gitignore`, runner had no ZIPs | Added `Package Lambda functions` step to both pipeline jobs |
+| `terraform fmt` check failing | Indentation issues in `modules/lambda/main.tf` | Ran `terraform fmt -recursive` locally |
+| `git push` rejected | Remote had commits not in local | `git pull --rebase origin main` |
+
+---
+
+## Skills Demonstrated
+
+**Infrastructure as Code**
+- Modular Terraform with inter-module dependencies
+- Remote state with S3 backend and file locking
+- Bootstrap pattern for state infrastructure
+
+**Serverless**
+- Lambda with EventBridge scheduling (rate + cron expressions)
+- Python + boto3 (Cost Explorer, EC2, ELB, RDS APIs)
+- Automatic Lambda packaging via `archive_file`
+
+**CI/CD & Security**
+- GitHub Actions OIDC — no static credentials
+- Two-job pipeline: plan (all branches) → apply (main only)
+- Artifact passing between jobs (`tfplan`)
+
+**Observability**
+- CloudWatch Dashboard with Lambda + DynamoDB metrics
+- CloudWatch Alarm → SNS on Lambda errors
+- 7-day log retention
+
+**FinOps**
+- Cost anomaly detection with historical baseline
+- Unused resource identification across EC2, ELB, RDS
+- Estimated savings reporting
+
+---
+
+## Author
+
+**Santiago Albi** — Cloud Engineer  
+[GitHub](https://github.com/SantiagoAlbi) · [LinkedIn](https://linkedin.com/in/santiago-albi)
+
+---
+---
+
+# 🇪🇸 FinOps Platform — Monitoreo y Optimización de Costos AWS (V2)
+
+Plataforma serverless que detecta automáticamente anomalías de costos en AWS, escanea recursos sin usar y envía alertas por email — completamente automatizada con CI/CD via GitHub Actions OIDC.
+
+> **Mejoras V2:** Estructura Terraform modular + estado remoto en S3 + pipeline CI/CD con autenticación OIDC. Sin credenciales AWS estáticas en ningún lado.
+
+---
+
+## Arquitectura
+
 ```
-🗑️  ALERTA: RECURSOS SIN USAR DETECTADOS
+┌─────────────────────────────────────────────────┐
+│                  EventBridge                     │
+│   rate(6h) ──────────┐   cron(9am) ─────────────┤
+└──────────────────────┼──────────────────────────┘
+                       │
+            ┌──────────┴──────────┐
+            ▼                     ▼
+   ┌─────────────────┐   ┌─────────────────┐
+   │   Lambda #1     │   │   Lambda #2     │
+   │ Detector de     │   │ Scanner de      │
+   │ Anomalías       │   │ Recursos Unused │
+   └────────┬────────┘   └────────┬────────┘
+            │                     │
+            ▼                     ▼
+   ┌─────────────┐       ┌─────────────────┐
+   │Cost Explorer│       │  EC2 / ELB /    │
+   │     API     │       │  RDS APIs       │
+   └──────┬──────┘       └────────┬────────┘
+          │                       │
+          └───────────┬───────────┘
+                      ▼
+             ┌─────────────────┐
+             │    DynamoDB     │
+             │  cost-history   │
+             └────────┬────────┘
+                      │
+                      ▼
+             ┌─────────────────┐
+             │   SNS Topic     │──► 📧 Alertas por Email
+             └─────────────────┘
 
-Total de recursos: 2
+             ┌─────────────────┐
+             │   CloudWatch    │
+             │ Logs + Dashboard│
+             │   + Alarmas     │
+             └─────────────────┘
 
-📦 EBS Volumes sin attachar (2):
-  • vol-013f3c944b957b44e - 1 GB gp2 - $0.10/mes
-  • vol-0cdd0b0d59b205d9f - 1 GB gp2 - $0.10/mes
-
-💰 Ahorro potencial: $0.20/mes
+Pipeline CI/CD:
+┌──────────────────────────────────────────────┐
+│  GitHub Actions (OIDC)                        │
+│  PR → terraform plan                          │
+│  push main → terraform plan + apply           │
+└──────────────────────────────────────────────┘
 ```
 
-**Probar manualmente:**
-```bash
-aws lambda invoke \
-  --function-name finops-platform-unused-resources-scanner \
-  --region us-east-1 \
-  response2.json
-```
+---
 
-# FinOps Platform - AWS Cost Monitoring & Optimization
+## Infraestructura (Módulos Terraform)
 
-Sistema automatizado de monitoreo, detección de anomalías de costos y optimización de recursos en AWS.
+| Módulo | Recursos |
+|--------|----------|
+| `modules/notifications` | SNS Topic + Suscripción Email |
+| `modules/storage` | Tabla DynamoDB (TTL + PITR) |
+| `modules/iam` | Role Lambda + Role GitHub Actions OIDC + Policies |
+| `modules/monitoring` | CloudWatch Log Groups + Dashboard + Alarma |
+| `modules/lambda` | 2× Lambda Functions + 2× EventBridge Rules |
 
-## 📋 Descripción
+**Estado remoto:** Bucket S3 con file locking (`use_lockfile = true`)  
+**Bootstrap:** Configuración Terraform separada en `bootstrap/` — se ejecuta una sola vez para crear el bucket de estado y la tabla de locking.
 
-Plataforma serverless que:
-- ✅ Detecta anomalías de costos automáticamente (cada 6 horas)
-- ✅ Identifica recursos sin usar diariamente
-- ✅ Envía alertas por email vía SNS
-- ✅ Almacena histórico en DynamoDB
-- ✅ Visualiza métricas en CloudWatch Dashboard
+---
 
-## 🏗️ Arquitectura
-```
-┌─────────────────┐
-│  EventBridge    │ ← Triggers programados
-└────────┬────────┘
-         │
-    ┌────┴─────┐
-    │          │
-    ▼          ▼
-┌────────┐  ┌────────┐
-│Lambda 1│  │Lambda 2│
-│Cost    │  │Unused  │
-│Anomaly │  │Resources│
-└───┬────┘  └───┬────┘
-    │           │
-    ├───────────┴──────────┐
-    │                      │
-    ▼                      ▼
-┌─────────┐           ┌─────────┐
-│Cost     │           │EC2/ELB/ │
-│Explorer │           │RDS APIs │
-└────┬────┘           └────┬────┘
-     │                     │
-     └──────┬──────────────┘
-            ▼
-     ┌─────────────┐
-     │  DynamoDB   │
-     │  + SNS      │
-     │  + Dashboard│
-     └─────────────┘
-```
+## Funciones Lambda
 
-## 🚀 Componentes
-
-### Infraestructura (IaC con Terraform)
-
-| Recurso | Propósito |
-|---------|-----------|
-| **2× Lambda Functions** | Detección de anomalías y recursos sin usar |
-| **SNS Topic** | Notificaciones por email |
-| **DynamoDB Table** | Histórico de costos (TTL 60 días) |
-| **IAM Role + Policies** | Permisos least-privilege |
-| **2× EventBridge Rules** | Scheduling automatizado |
-| **CloudWatch Logs** | Logs con retención 7 días |
-| **CloudWatch Dashboard** | Visualización de métricas |
-| **CloudWatch Alarm** | Alerta si Lambda tiene errores |
-
-### Lambda #1: Cost Anomaly Detector
-
-**Función:** Detecta incrementos anormales de costos (>30%)
-
-**Trigger:** Cada 6 horas (rate expression)
-
-**Proceso:**
-1. Consulta Cost Explorer API → costos de HOY por servicio
-2. Consulta Cost Explorer API → costos últimos 7 días
-3. Calcula promedio histórico por servicio
-4. Compara: si HOY > promedio × 1.30 → anomalía
-5. Guarda datos en DynamoDB
-6. Envía alerta SNS si hay anomalías
+### Lambda #1 — Detector de Anomalías de Costos
+- **Trigger:** Cada 6 horas (`rate(6 hours)`)
+- **Lógica:** Consulta Cost Explorer comparando costos de hoy vs. promedio histórico de 7 días por servicio. Dispara alerta si algún servicio supera el 30% del promedio.
+- **Output:** Guarda datos en DynamoDB + alerta SNS si hay anomalías.
 
 **Ejemplo de alerta:**
 ```
-🚨 ALERTA DE ANOMALÍA DE COSTOS 🚨
+🚨 ALERTA DE ANOMALÍA DE COSTOS
 
 Se detectaron 2 servicios con costos anormales:
 
-- Amazon Elastic Load Balancing: $0.05 (↑150% vs promedio $0.02)
-- Amazon Relational Database Service: $0.02 (↑100% vs promedio $0.01)
+- Amazon ELB: $0.05 (↑150% vs promedio $0.02)
+- Amazon RDS: $0.02 (↑100% vs promedio $0.01)
 
-Umbral de alerta: 30%
-Período de comparación: últimos 7 días
+Umbral: 30% | Período de comparación: últimos 7 días
 ```
 
-### Lambda #2: Unused Resources Scanner
-
-**Función:** Detecta recursos huérfanos que generan costos
-
-**Trigger:** Diario a las 9:00 AM UTC (cron expression)
-
-**Detecta:**
-- 📦 EBS volumes sin attachar
-- 🌐 Elastic IPs sin asignar
-- ⚖️ Load Balancers sin targets
-- 💾 RDS snapshots manuales >30 días
+### Lambda #2 — Scanner de Recursos Sin Usar
+- **Trigger:** Diario a las 9:00 AM UTC (`cron(0 9 * * ? *)`)
+- **Detecta:** EBS volumes sin attachar, Elastic IPs sin asignar, Load Balancers sin targets, snapshots RDS manuales mayores a 30 días.
 
 **Ejemplo de alerta:**
 ```
-🗑️  ALERTA: RECURSOS SIN USAR DETECTADOS
-
-Total de recursos: 2
+🗑️ RECURSOS SIN USAR DETECTADOS
 
 📦 EBS Volumes sin attachar (2):
-  • vol-013f3c944b957b44e - 1 GB gp2 - $0.10/mes
-  • vol-0cdd0b0d59b205d9f - 1 GB gp2 - $0.10/mes
+  • vol-013f3c944b957b44e — 1 GB gp2 — $0.10/mes
+  • vol-0cdd0b0d59b205d9f — 1 GB gp2 — $0.10/mes
 
 💰 Ahorro potencial: $0.20/mes
 ```
 
+---
+
+## Estructura del Proyecto
+
+```
+finops/
+├── provider.tf                        # Backend S3 + provider AWS
+├── variables.tf                       # Variables raíz
+├── outputs.tf                         # Outputs raíz
+├── main.tf                            # Llamadas a módulos
+│
+├── modules/
+│   ├── notifications/                 # SNS
+│   ├── storage/                       # DynamoDB
+│   ├── iam/                           # Roles IAM + OIDC
+│   ├── monitoring/                    # CloudWatch
+│   └── lambda/                        # Lambda + EventBridge
+│
+├── lambda_src/
+│   ├── cost_anomaly/
+│   │   └── lambda_cost_anomaly.py
+│   └── unused_resources/
+│       └── lambda_unused_resources.py
+│
+├── bootstrap/                         # Setup único del estado remoto
+│   └── main.tf
+│
+├── docs/
+│   └── screenshots/
+│
+└── .github/
+    └── workflows/
+        ├── terraform-validate.yml     # fmt + validate en PRs
+        └── deploy.yml                 # plan + apply con OIDC
+```
+
+---
+
+## Pipeline CI/CD
+
+```
+Pull Request
+    │
+    └── terraform-validate.yml
+            ├── fmt check
+            ├── validate
+            └── plan (solo lectura)
+
+Push a main
+    │
+    └── deploy.yml
+            ├── Job 1: terraform-plan
+            │       ├── OIDC → asumir rol IAM (sin credenciales estáticas)
+            │       ├── Empaquetar ZIPs de Lambda
+            │       ├── terraform init (backend S3)
+            │       ├── terraform fmt -check
+            │       ├── terraform validate
+            │       └── terraform plan → subir artefacto
+            │
+            └── Job 2: terraform-apply (needs: plan)
+                    ├── OIDC → asumir rol IAM
+                    ├── Empaquetar ZIPs de Lambda
+                    ├── terraform init (backend S3)
+                    ├── Descargar artefacto del plan
+                    └── terraform apply
+```
+
+**Autenticación:** GitHub Actions asume un rol IAM via OIDC — sin access keys de AWS almacenadas como secrets.
+
+---
+
+## Screenshots
+
+### Pipeline CI/CD
+![GitHub Actions](docs/screenshots/github-actions.png)
+
+### Funciones Lambda
+![Lambda Functions](docs/screenshots/lambda-functions.png)
+
 ### CloudWatch Dashboard
+![Dashboard](docs/screenshots/cloudwatch-dashboard.png)
 
-**Widgets incluidos:**
-- Invocations, Errors, Duration de ambas Lambdas
-- DynamoDB read/write operations
-- SNS messages sent/failed
-- Recent anomaly alerts (Logs Insights)
-- Unused resources detection log (Logs Insights)
-- Custom metrics: AnomaliesDetected, ServicesChecked
+### EventBridge Rules
+![EventBridge](docs/screenshots/eventbridge-rules.png)
 
-## 📊 Deployment
+### Estado Remoto S3
+![S3 State](docs/screenshots/s3-remote-state.png)
 
-### Prerrequisitos
+### Rol IAM OIDC
+![IAM Role](docs/screenshots/iam-oidc-role.png)
+
+---
+
+## Deployment
+
+### Prerequisitos
 ```bash
-# Terraform >= 1.0
-terraform version
-
-# AWS CLI configurado
+terraform version   # >= 1.10
 aws sts get-caller-identity
-
-# Python 3.11+
-python3 --version
+python3 --version   # >= 3.11
 ```
 
-### Instalación
-
-**1. Clonar repositorio:**
+### 1. Bootstrap (solo una vez)
 ```bash
-git clone <repo-url>
-cd finops
-```
-
-**2. Configurar email para alertas:**
-
-Editar `variables.tf` línea 27:
-```hcl
-variable "alert_email" {
-  default = "tu@email.com"  # ← Cambiar aquí
-}
-```
-
-**3. Empaquetar Lambdas:**
-```bash
-chmod +x package_lambda.sh
-./package_lambda.sh
-```
-
-**4. Deployar infraestructura:**
-```bash
+cd bootstrap/
 terraform init
-terraform plan
 terraform apply
 ```
 
-**5. Confirmar subscription SNS:**
-- Revisar email inbox/spam
-- Click en "Confirm subscription" del email AWS SNS
+### 2. Configurar secrets en GitHub
+En GitHub → Settings → Secrets → Actions:
+- `AWS_ROLE_ARN` — ARN del rol OIDC de GitHub Actions (output del paso 3)
+- `ALERT_EMAIL` — email para recibir alertas SNS
 
-**6. Verificar deployment:**
+### 3. Deploy
+```bash
+cd ..
+terraform init
+terraform apply
+```
+
+Confirmar la suscripción SNS desde el email recibido.
+
+### 4. Probar manualmente
 ```bash
 # Probar Lambda #1
 aws lambda invoke \
   --function-name finops-platform-cost-anomaly-detector \
   --region us-east-1 \
-  response1.json
+  response1.json && cat response1.json
 
 # Probar Lambda #2
 aws lambda invoke \
   --function-name finops-platform-unused-resources-scanner \
   --region us-east-1 \
-  response2.json
-
-# Ver logs
-aws logs tail /aws/lambda/finops-platform-cost-anomaly-detector \
-  --follow --region us-east-1
+  response2.json && cat response2.json
 ```
 
-## 💡 Verificación de Datos
-
-**DynamoDB - histórico de costos:**
-```bash
-aws dynamodb scan \
-  --table-name finops-platform-cost-history \
-  --region us-east-1 \
-  --output table
-```
-
-**Estructura de datos:**
-```json
-{
-  "date_service": "2026-02-13#EC2",
-  "timestamp": 1771014880,
-  "service": "EC2", 
-  "cost": 45.67,
-  "currency": "USD",
-  "ttl": 1776198880
-}
-```
-
-**CloudWatch Dashboard:**
-
-Después del `terraform apply`, copiar la URL del output:
-```
-dashboard_url = "https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=finops-platform-cost-dashboard"
-```
-
-## 💰 Costos Estimados
-
-| Servicio | Uso Mensual | Costo |
-|----------|-------------|-------|
-| Lambda Cost Anomaly | 120 invocations × 1s | $0.00 (free tier) |
-| Lambda Unused Resources | 30 invocations × 2s | $0.00 (free tier) |
-| SNS | 50 emails | $0.00 (free tier) |
-| DynamoDB | on-demand, bajo volumen | $1-2 |
-| CloudWatch Logs | 7 días retención | $0.50 |
-| CloudWatch Dashboard | 1 dashboard | $3.00 |
-| Cost Explorer API | 150 requests | $1.50 |
-| CloudWatch Alarm | 1 alarm | $0.10 |
-| **TOTAL** | | **~$5-7/mes** |
-
-## 🔒 Seguridad
-
-- ✅ IAM roles con principio de least privilege
-- ✅ SNS topic encriptado con AWS managed key
-- ✅ DynamoDB con point-in-time recovery
-- ✅ CloudWatch logs para auditoría completa
-- ✅ TTL en DynamoDB (auto-delete después 60 días)
-- ✅ No hardcoded credentials
-
-## 🎯 Skills Demostrados
-
-### Cloud Engineering
-- ✅ AWS Lambda (serverless compute)
-- ✅ EventBridge (event-driven architecture)
-- ✅ DynamoDB (NoSQL database design)
-- ✅ SNS (notification systems)
-- ✅ CloudWatch (observability + dashboards)
-- ✅ Cost Explorer API (billing automation)
-
-### DevOps
-- ✅ Terraform (Infrastructure as Code)
-- ✅ Python + boto3 (automation)
-- ✅ IAM (security & permissions)
-- ✅ Bash scripting
-
-### FinOps
-- ✅ Cost anomaly detection
-- ✅ Resource optimization
-- ✅ Automated alerting
-- ✅ Cost tracking & reporting
-
-## 📁 Estructura del Proyecto
-```
-finops/
-├── terraform/
-│   ├── provider.tf              # AWS provider config
-│   ├── variables.tf             # Input variables
-│   ├── sns.tf                   # SNS topic + subscription
-│   ├── dynamodb.tf              # DynamoDB table
-│   ├── iam.tf                   # IAM roles & policies
-│   ├── cloudwatch.tf            # Log groups
-│   ├── lambda_cost_anomaly.tf   # Lambda #1 + EventBridge
-│   ├── lambda_unused_resources.tf # Lambda #2 + EventBridge
-│   ├── dashboard.tf             # CloudWatch Dashboard
-│   ├── metrics.tf               # Custom metrics + alarms
-│   ├── outputs.tf               # Output values
-│   └── .gitignore
-│
-├── lambdas/
-│   ├── lambda_cost_anomaly.py   # Cost anomaly detector
-│   └── lambda_unused_resources.py # Unused resources scanner
-│
-├── scripts/
-│   └── package_lambda.sh        # Lambda packaging script
-│
-└── README.md
-```
-
-## 🧪 Testing
-
-**Crear recurso de prueba (EBS volume):**
-```bash
-aws ec2 create-volume \
-  --size 1 \
-  --availability-zone us-east-1a \
-  --region us-east-1
-```
-
-**Invocar Lambda para detectarlo:**
-```bash
-aws lambda invoke \
-  --function-name finops-platform-unused-resources-scanner \
-  --region us-east-1 \
-  response.json
-
-cat response.json
-# Debería mostrar: "total_unused": 1
-```
-
-**Eliminar recurso de prueba:**
-```bash
-aws ec2 delete-volume --volume-id vol-xxxxx --region us-east-1
-```
-
-## 🧹 Cleanup
+### 5. Cleanup
 ```bash
 terraform destroy
 ```
 
-**Nota:** Terraform NO elimina:
-- Recursos creados manualmente (EBS volumes, EIPs, etc.)
-- CloudWatch Logs después de 7 días (se borran automáticamente)
+---
 
-## 🔄 Roadmap / Mejoras Futuras
+## Costo Estimado
 
-- [ ] Integración con Slack (reemplazar SNS)
-- [ ] Filtrado por tags específicos
-- [ ] Umbrales personalizables por servicio
-- [ ] Machine learning para predicción de costos
-- [ ] Multi-región support
-- [ ] Terraform modules para reutilización
-- [ ] CI/CD con GitHub Actions
+| Servicio | Uso Mensual | Costo |
+|---------|-------------|-------|
+| Lambda #1 | 120 ejecuciones × 1s | $0.00 (free tier) |
+| Lambda #2 | 30 ejecuciones × 2s | $0.00 (free tier) |
+| SNS | ~50 emails | $0.00 (free tier) |
+| DynamoDB | on-demand, bajo volumen | ~$1.00 |
+| CloudWatch Logs | retención 7 días | ~$0.50 |
+| CloudWatch Dashboard | 1 dashboard | ~$3.00 |
+| Cost Explorer API | ~150 requests | ~$1.50 |
+| **TOTAL** | | **~$6/mes** |
 
-## 📝 Variables Configurables
+---
 
-| Variable | Default | Descripción |
-|----------|---------|-------------|
-| `aws_region` | us-east-1 | Región AWS |
-| `environment` | dev | Ambiente (dev/prod) |
-| `project_name` | finops-platform | Nombre del proyecto |
-| `alert_email` | "" | Email para alertas SNS |
-| `cost_anomaly_threshold` | 30 | % incremento para alertar |
-| `historical_days` | 7 | Días para comparación |
-| `retention_days` | 7 | Retención CloudWatch logs |
+## Seguridad
 
-## 📚 Referencias
+- IAM least-privilege (roles separados para Lambda y GitHub Actions)
+- Sin credenciales AWS estáticas — solo OIDC
+- Bucket S3: versionado + encriptación + acceso público bloqueado
+- DynamoDB: point-in-time recovery habilitado
+- CloudWatch logs para auditoría completa
+- TTL en DynamoDB: auto-delete de registros a los 60 días
 
-- [AWS Cost Explorer API](https://docs.aws.amazon.com/cost-management/latest/APIReference/API_Operations.html)
-- [Lambda Best Practices](https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html)
-- [DynamoDB TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html)
-- [EventBridge Scheduling](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-rule-schedule.html)
-- [Terraform AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs)
+---
 
-## 👤 Autor
+## V1 → V2: Qué Cambió y Por Qué
 
-**Santiago** - Cloud Engineer / Cybersecurity Professional
+| | V1 | V2 |
+|---|---|---|
+| Estructura Terraform | Flat (todos los `.tf` en root) | 5 módulos con responsabilidad clara |
+| Estado | Local `terraform.tfstate` | Estado remoto S3 + file locking |
+| Empaquetado Lambda | Script manual `package_lambda.sh` | Data source `archive_file` — automático |
+| CI/CD | Solo `validate` (fmt + validate) | Pipeline completo `plan` + `apply` |
+| Autenticación AWS | Credenciales estáticas en `.env` | OIDC — cero credenciales almacenadas |
+| IAM | Un rol compartido para todo | Rol separado por workload |
+| Outputs | Dispersos o inexistentes | Centralizados en `outputs.tf` raíz |
 
-Portfolio: [GitHub](https://github.com/tu-usuario)
+---
 
-## 📄 Licencia
+## Problemas Resueltos
 
-Este proyecto es de código abierto para propósitos educativos y de portfolio.
+| Problema | Causa Raíz | Solución |
+|---------|-----------|----------|
+| `use_lockfile` no soportado | Workflow usaba Terraform 1.7.0 | Actualizar a 1.10.0 |
+| "No changes" con estado vacío | Backend S3 vacío, sin apply previo | Ejecutar `terraform apply` completo |
+| `AccessDenied: ListOpenIDConnectProviders` | Rol de GitHub Actions sin permisos de lectura OIDC | Agregar `iam:ListOpenIDConnectProviders` + `iam:GetOpenIDConnectProvider` |
+| ZIPs de Lambda faltantes en CI | `*.zip` en `.gitignore`, runner sin ZIPs | Agregar step de empaquetado en ambos jobs del pipeline |
+| `terraform fmt` fallando | Indentación incorrecta en `modules/lambda/main.tf` | `terraform fmt -recursive` local antes del push |
+| `git push` rechazado | Remote con commits que no estaban en local | `git pull --rebase origin main` |
+
+---
+
+## Skills Demostrados
+
+**Infrastructure as Code**
+- Terraform modular con dependencias entre módulos
+- Estado remoto con backend S3 y file locking
+- Patrón bootstrap para infraestructura de estado
+
+**Serverless**
+- Lambda con EventBridge scheduling (rate + cron expressions)
+- Python + boto3 (Cost Explorer, EC2, ELB, RDS APIs)
+- Empaquetado automático de Lambda via `archive_file`
+
+**CI/CD & Seguridad**
+- GitHub Actions OIDC — sin credenciales estáticas
+- Pipeline de dos jobs: plan (todas las ramas) → apply (solo main)
+- Transferencia de artefactos entre jobs (`tfplan`)
+
+**Observabilidad**
+- CloudWatch Dashboard con métricas de Lambda + DynamoDB
+- CloudWatch Alarm → SNS en errores de Lambda
+- Retención de logs 7 días
+
+**FinOps**
+- Detección de anomalías de costos con baseline histórico
+- Identificación de recursos sin usar en EC2, ELB, RDS
+- Reporte de ahorro potencial estimado
+
+---
+
+## Autor
+
+**Santiago Albi** — Cloud Engineer  
+[GitHub](https://github.com/SantiagoAlbi) · [LinkedIn](https://www.linkedin.com/in/santiagoalbisetti/)

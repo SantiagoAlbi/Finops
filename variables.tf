@@ -50,3 +50,9 @@ variable "github_repo" {
   description = "GitHub repository in format owner/repo"
   default     = "SantiagoAlbi/Finops"
 }
+
+variable "cost_anomaly_threshold" {   #ver si sobra
+  type        = string
+  description = "Cost anomaly threshold percentage"
+  default     = "30"
+}
